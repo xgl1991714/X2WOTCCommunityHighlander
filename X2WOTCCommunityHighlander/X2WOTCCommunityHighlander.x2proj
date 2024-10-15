@@ -120,6 +120,9 @@
     <Content Include="Src\Core\Classes\Object.uc">
       <SubType>Content</SubType>
     </Content>
+    <Content Include="Src\Core\Globals.uci">
+      <SubType>Content</SubType>
+    </Content>
     <Content Include="Src\Engine\Classes\AudioComponent.uc">
       <SubType>Content</SubType>
     </Content>
@@ -158,6 +161,9 @@
       <SubType>Content</SubType>
     </Content>
     <Content Include="Src\XComGame\Classes\CharacterPoolManager.uc">
+      <SubType>Content</SubType>
+    </Content>
+    <Content Include="Src\XComGame\Classes\CHDLCHookManager.uc">
       <SubType>Content</SubType>
     </Content>
     <Content Include="Src\XComGame\Classes\CHDLCRunOrder.uc">
@@ -505,6 +511,9 @@
     <Content Include="Src\XComGame\Classes\X2Ability_CarryUnit.uc">
       <SubType>Content</SubType>
     </Content>
+    <Content Include="Src\XComGame\Classes\X2Ability_ChosenSniper.uc">
+      <SubType>Content</SubType>
+    </Content>
     <Content Include="Src\XComGame\Classes\X2Ability_ChryssalidCocoon.uc">
       <SubType>Content</SubType>
     </Content>
@@ -536,6 +545,9 @@
       <SubType>Content</SubType>
     </Content>
     <Content Include="Src\XComGame\Classes\X2AbilityTrigger_EndOfMove.uc">
+      <SubType>Content</SubType>
+    </Content>
+    <Content Include="Src\XComGame\Classes\X2Ability_TheLost.uc">
       <SubType>Content</SubType>
     </Content>
     <Content Include="Src\XComGame\Classes\X2AchievementTracker.uc">
@@ -877,6 +889,9 @@
     <Content Include="Src\XComGame\Classes\XComPathingPawn.uc">
       <SubType>Content</SubType>
     </Content>
+    <Content Include="Src\XComGame\Classes\XComPresentationLayerBase.uc">
+      <SubType>Content</SubType>
+    </Content>
     <Content Include="Src\XComGame\Classes\XComSoundManager.uc">
       <SubType>Content</SubType>
     </Content>
@@ -1040,6 +1055,9 @@
       <SubType>Content</SubType>
     </Content>
     <Content Include="Src\XComGame\Classes\XGWeapon.uc">
+      <SubType>Content</SubType>
+    </Content>
+    <Content Include="Src\XComGame\Classes\X2Effect_Brutal.uc">
       <SubType>Content</SubType>
     </Content>
   </ItemGroup>
