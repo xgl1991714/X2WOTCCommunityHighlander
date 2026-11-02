@@ -200,6 +200,23 @@ event OnCreation(optional X2DataTemplate Template)
 
 function OnBeginTacticalPlay(XComGameState NewGameState)
 {
+	// Variable for Issue #1624
+	local XComGameState_BattleData	BattleData;
+	local X2WeaponTemplate			WeaponTemplate;
+	
+	// Start Issue #1624
+	// Add in extra call of GetClipSize(), but only if it isn't a tactical<>tactical transfer 
+	// and if the Weapon's ammo wasn't already merged
+	BattleData = XComGameState_BattleData(`XCOMHISTORY.GetSingleGameStateObjectForClass(class'XComGameState_BattleData'));
+	WeaponTemplate = X2WeaponTemplate(GetMyTemplate());
+	if (!(WeaponTemplate != none && WeaponTemplate.bMergeAmmo) &&
+		!(BattleData.DirectTransferInfo.IsDirectMissionTransfer 
+		&& BattleData.DirectTransferInfo.TransferredUnitStats.Find('UnitStateRef', OwnerStateObject) != INDEX_NONE))
+	{
+		Ammo = GetClipSize();
+	}
+	// End Issue #1624
+	
 	RegisterForCosmeticUnitEvents(NewGameState);
 }
 
@@ -478,43 +495,59 @@ function EventListenerReturn OnUnitDied(Object EventData, Object EventSource, XC
 	local XComGameState_Item ItemState;
 	local vector NewLocation;
 	local XComGameStateContext_ChangeContainer ChangeContext;
-
+	
+	// Variable for Issue #367
+	local XComGameState_Unit OwnerUnitState;
+	
+	// Start Issue #367
+	/// HL-Docs: ref:Bugfixes; issue:367
+	/// Gremlins now correctly die when the Gremlin's owner dies while the Gremlin is attached to another unit.
+	
 	UnitState = XComGameState_Unit(EventData);
-	//  was this the unit we are attached to or our owner?
-	if (UnitState.ObjectID == AttachedUnitRef.ObjectID || UnitState.ObjectID == OwnerStateObject.ObjectID)
+	if (UnitState == none)
+		return ELR_NoInterrupt;
+	
+	if (UnitState.ObjectID == OwnerStateObject.ObjectID)
 	{
+		// Owner of the Gremlin died, kill the Gremlin.
+		
 		History = `XCOMHISTORY;
-		UnitState = XComGameState_Unit(History.GetGameStateForObjectID(OwnerStateObject.ObjectID));
 		CosmeticUnit = XComGameState_Unit(History.GetGameStateForObjectID(CosmeticUnitRef.ObjectID));
-		//  if it was not our owner, reattach to them
-		if ( ( UnitState.ObjectID != OwnerStateObject.ObjectID ) || (OwnerStateObject.ObjectID != AttachedUnitRef.ObjectID) )
+		
+		if (CosmeticUnit != none)
+		{
+			NewGameState = class'XComGameStateContext_ChangeContainer'.static.CreateChangeState("Owner Unit Died");
+			ChangeContext = XComGameStateContext_ChangeContainer(NewGameState.GetContext());
+			ChangeContext.BuildVisualizationFn = ItemOwnerDeathVisualization;
+			CosmeticUnit = XComGameState_Unit(NewGameState.ModifyStateObject(CosmeticUnit.Class, CosmeticUnit.ObjectID));
+			CosmeticUnit.SetCurrentStat(eStat_HP, 0);
+			`GAMERULES.SubmitGameState(NewGameState);
+		}
+	}
+	else if (UnitState.ObjectID == AttachedUnitRef.ObjectID)
+	{
+		// Unit to whom the Gremlin is attached to has died, recall the Gremlin and re-attach to its owner.
+		
+		History = `XCOMHISTORY;
+		CosmeticUnit = XComGameState_Unit(History.GetGameStateForObjectID(CosmeticUnitRef.ObjectID));
+		OwnerUnitState = XComGameState_Unit(History.GetGameStateForObjectID(OwnerStateObject.ObjectID));
+		
+		if (OwnerUnitState != none && CosmeticUnit != none)
 		{
 			NewGameState = class'XComGameStateContext_ChangeContainer'.static.CreateChangeState("Attached Unit Died");
 			ItemState = XComGameState_Item(NewGameState.ModifyStateObject(Class, ObjectID));
 			ItemState.AttachedUnitRef = OwnerStateObject;
 			`GAMERULES.SubmitGameState(NewGameState);
-						
-			if (UnitState != none && CosmeticUnit != none && CosmeticUnit.TileLocation != UnitState.TileLocation)
+
+			if (CosmeticUnit.TileLocation != OwnerUnitState.TileLocation)
 			{
-				NewLocation = `XWORLD.GetPositionFromTileCoordinates(UnitState.TileLocation);
+				NewLocation = `XWORLD.GetPositionFromTileCoordinates(OwnerUnitState.TileLocation);
 				XGUnit(CosmeticUnit.GetVisualizer()).MoveToLocation(NewLocation);
 			}
 		}
-		//  if it was our owner, we have to die too
-		else
-		{
-			if (CosmeticUnit != none)
-			{
-				NewGameState = class'XComGameStateContext_ChangeContainer'.static.CreateChangeState("Owner Unit Died");
-				ChangeContext = XComGameStateContext_ChangeContainer(NewGameState.GetContext());
-				ChangeContext.BuildVisualizationFn = ItemOwnerDeathVisualization;
-				CosmeticUnit = XComGameState_Unit(NewGameState.ModifyStateObject(CosmeticUnit.Class, CosmeticUnit.ObjectID));
-				CosmeticUnit.SetCurrentStat(eStat_HP, 0);
-				`GAMERULES.SubmitGameState(NewGameState);
-			}				
-		}
 	}
-
+	// End Issue #367
+	
 	return ELR_NoInterrupt;
 }
 
@@ -776,10 +809,14 @@ simulated function bool HasBeenModified()
 		return true;
 	//end issue #104
 		
-	WeaponTemplate = X2WeaponTemplate( m_ItemTemplate );
-
-	// Single line for Issues #93 and #306
-	if ((WeaponTemplate != none) && (GetNumUpgradeSlots() > 0) && (GetMyWeaponUpgradeCount() > 0))
+	WeaponTemplate = X2WeaponTemplate( m_ItemTemplate );	
+	/// HL-Docs: ref:Bugfixes; issue:1429
+	/// Fix bug that caused weapons that have weapon upgrades installed, despite not having any weapon upgrade slots, 
+	/// to stack in the HQ inventory, causing them to lose their installed upgrades when equipped. The fix removes the 
+	/// check for the number of weapon upgrade slots on the weapon from the logic that determines whether the item has 
+	/// been modified or not, and leaves just the check for number of installed weapon upgrades.
+	// Single line for Issues #93, #306 and #1429
+	if ((WeaponTemplate != none) /* && (GetNumUpgradeSlots() > 0)*/ && (GetMyWeaponUpgradeCount() > 0))
 		return true;
 
 	return false;
@@ -1989,14 +2026,23 @@ simulated function array<UISummary_ItemStat> GetUISummary_WeaponStats(optional X
 	if (PopulateWeaponStat(GetItemCritChance(), UpgradeStats.bIsCritModified, UpgradeStats.Crit, Item, true))
 		Stats.AddItem(Item);
 
+	// Start Issue #1557
+	/// HL-Docs: ref:Bugfixes; issue:1557
+	/// Don't hide aim for weapon UI even if excluded from stat boosts
 	// Ensure that any items which are excluded from stat boosts show values that show up in the Soldier Header
-	if (class'UISoldierHeader'.default.EquipmentExcludedFromStatBoosts.Find(m_ItemTemplate.DataName) == INDEX_NONE)
-	{
-		// Aim -------------------------------------------------------------------------
-		Item.Label = class'XLocalizedData'.default.AimLabel;
-		if (PopulateWeaponStat(GetItemAimModifier(), UpgradeStats.bIsAimModified, UpgradeStats.Aim, Item, true))
-			Stats.AddItem(Item);
-	}
+	// if (class'UISoldierHeader'.default.EquipmentExcludedFromStatBoosts.Find(m_ItemTemplate.DataName) == INDEX_NONE)
+	// {
+	// 	// Aim -------------------------------------------------------------------------
+	// 	Item.Label = class'XLocalizedData'.default.AimLabel;
+	// 	if (PopulateWeaponStat(GetItemAimModifier(), UpgradeStats.bIsAimModified, UpgradeStats.Aim, Item, true))
+	// 		Stats.AddItem(Item);
+	// }
+
+	// Aim -------------------------------------------------------------------------
+	Item.Label = class'XLocalizedData'.default.AimLabel;
+	if (PopulateWeaponStat(GetItemAimModifier(), UpgradeStats.bIsAimModified, UpgradeStats.Aim, Item, true))
+		Stats.AddItem(Item);
+	// End Issue #1557
 
 	// Issue #237 start
 	// Pierce -------------------------------------------------------------------------

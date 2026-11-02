@@ -251,6 +251,16 @@ static event OnLoadedSavedGameToTactical()
 }
 //#end issue #647
 
+// Start Issue #1425
+/// HL-Docs: feature:ModifyStrategyStartState; issue:1425; tags:strategy
+/// Called just before transferring from tactical to strategy.
+/// Allows mods to modify the strategy start state.
+static event ModifyStrategyStartState(XComGameState StartState)
+{
+
+}
+// End Issue #1425
+
 /// Start Issue #21
 /// <summary>
 /// Called from XComUnitPawn.DLCAppendSockets
@@ -286,6 +296,74 @@ static function bool GetValidFloorSpawnLocations(out array<Vector> FloorPoints, 
 /// start Issue #114: added XComGameState_Item as something that can be passed down for disabled reason purposes
 /// basically the inventory hook wtih an added paramter to pass through
 /// we leave the old one alone for compatibility reasons, as we call it through here for those mods.
+///
+/// HL-Docs: feature:CanAddItemToInventory; issue:114; tags:loadoutslots
+///
+/// This DLC hook can be used to override the game's default behavior when it comes to 
+/// whether a particular unit should be able to equip a particular item into a particular inventory slot.
+///
+/// Using this hook can be complicated, and since it runs every time any unit attempts to equip any item,
+/// it must be handled with extreme care to avoid unintentional changes to inventory item restrictions,
+/// and to reduce the performance impact as much as possible.
+///
+/// (1) To disallow equipping an item that normally can be equipped, 
+/// set `bCanAddItem = 0;` provide a localized `DisabledReason` and `return CheckGameState != none;`
+///
+/// (2) To allow equipping an item that normally cannot be equipped, do the following:
+/// ```unrealscript
+/// DisabledReason = "";
+/// if (CheckGameState != none && UnitState.GetItemInSlot(Slot, CheckGameState) == none)
+/// {
+///     bCanAddItem = 1;
+/// }
+/// `return CheckGameState != none;
+/// ```
+/// The `GetItemInSlot() == none` check is critically important for non-multi-item slots, it is necessary
+/// to make sure the unit does not end up equipping an item into a slot that already has another item in it.
+/// 
+/// (3) If you do not wish to override game's default behavior in this instance, `return CheckGameState == none;`
+/// 
+/// Example use:
+/// ```unrealscript
+/// static function bool CanAddItemToInventory_CH_Improved(out int bCanAddItem, const EInventorySlot Slot, const X2ItemTemplate ItemTemplate, int Quantity, XComGameState_Unit UnitState, optional XComGameState CheckGameState, optional out string DisabledReason, optional XComGameState_Item ItemState)
+/// {
+///     local X2ArmorTemplate  ArmorTemplate;
+/// 	local X2WeaponTemplate WeaponTemplate;
+///     local bool OverrideNormalBehavior;
+///     local bool DoNotOverrideNormalBehavior;
+/// 
+///     // Prepare return values to make it easier for us to read the code.
+///     OverrideNormalBehavior = CheckGameState != none;
+///     DoNotOverrideNormalBehavior = CheckGameState == none;   
+/// 
+/// 	if (Slot == eInvSlot_Armor)
+/// 	{
+/// 		ArmorTemplate = X2ArmorTemplate(ItemTemplate);
+/// 		if (ArmorTemplate != none && ArmorTemplate.ArmorCat == 'CyborgArmor' && !UnitState.HasSoldierAbility('CyborgUnlockAbility'))
+/// 		{
+/// 			// If the unit does not have the Cyborg Ability, disallow equipping Cyborg Armor.
+/// 			DisabledReason = mStr_CyborgOnly;
+/// 			bCanAddItem = 0;
+/// 			return OverrideNormalBehavior;
+/// 		}
+/// 	} 
+/// 	else if (Slot == eInvSlot_PrimaryWeapon)
+/// 	{
+/// 		WeaponTemplate = X2WeaponTemplate(ItemTemplate);
+/// 		if (WeaponTemplate != none && WeaponTemplate.WeaponCat == 'sparkrifle' && UnitState.HasSoldierAbility('CyborgUnlockAbility'))
+/// 		{
+/// 			// If the unit has Cyborg Ability, allow equipping SPARK Weapons.
+/// 			DisabledReason = "";
+/// 			if (CheckGameState != none && UnitState.GetItemInSlot(Slot, CheckGameState) == none)
+/// 			{
+/// 				bCanAddItem = 1;
+/// 			}
+/// 			return OverrideNormalBehavior;
+/// 		}
+/// 	}
+///     return DoNotOverrideNormalBehavior;
+/// }
+/// ```
 ///
 static function bool CanAddItemToInventory_CH_Improved(out int bCanAddItem, const EInventorySlot Slot, const X2ItemTemplate ItemTemplate, int Quantity, XComGameState_Unit UnitState, optional XComGameState CheckGameState, optional out string DisabledReason, optional XComGameState_Item ItemState)
 {
@@ -627,15 +705,15 @@ static function OnPreCreateTemplates()
 }
 /// End issue #412
 
-/// Start Issue #419
-/// <summary>
-/// Called from X2AbilityTag.ExpandHandler
-/// Expands vanilla AbilityTagExpandHandler to allow reflection
-/// </summary>
+// Start issue #419
+/// HL-Docs: feature:AbilityTagExpandHandler_CH; issue:419; tags:
+/// Called from X2AbilityTag::ExpandHandler() - Expands functionality of vanilla AbilityTagExpandHandler. 
+/// Allows mods to use gamestate objects to fill in tagged variables. Useful if there are values that are altered during runtime or dynamic custom text.
 static function bool AbilityTagExpandHandler_CH(string InString, out string OutString, Object ParseObj, Object StrategyParseOb, XComGameState GameState)
 {
 	return false;
 }
+//End Issue #419
 
 /// Start Issue #409
 /// <summary>
@@ -704,16 +782,22 @@ static function bool UseAlternateMissionIntroDefinition(MissionDefinition Active
 }
 // End Issue #395
 
-/// Start Issue #455
-/// <summary>
+// Start Issue #455
+/// HL-Docs: feature:UnitPawnPostInitAnimTree; issue:455; tags:pawns
 /// Called from XComUnitPawnNativeBase.PostInitAnimTree
 /// Allows patching the animtree template before its initialized.
-/// </summary>
+/// #Issue #1514 Addendum
+/// `UnitState` will always be `None`
+///
+/// This hook is called in `PostInitAnimTree` event function in `XComUnitPawnNativeBase`, which is called as part of the `Spawn` function
+/// when a pawn is spawned. Because of this, `UnitState` will be `None`, `Pawn` has no owner or `ObjectID` or a `XGUnit` assigned to it
+/// and you can't retrieve the state the pawn was created from.
+/// You can fetch the archetype the pawn was created with `Pawn.ObjectArchetype` for some idea of pawn origins.
 static function UnitPawnPostInitAnimTree(XComGameState_Unit UnitState, XComUnitPawnNativeBase Pawn, SkeletalMeshComponent SkelComp)
 {
 	return;
 }
-/// End Issue #455
+// End Issue #455
 
 // Start Issue #783
 // <summary>
@@ -819,3 +903,101 @@ static function OnLoadedSavedGameWithDLCExisting ()
 {
 }
 // End issue #808
+
+// Start Issue #1524
+/// HL-Docs: feature:OverrideDropshipMapImage; issue:1524; tags:tactical
+/// An image of the objective parcel is fetched for the dropship briefing screen, while players are waiting for the mission to load.
+/// This hook runs in `XComPlayerController::UpdateUIBriefingScreen`, which uses `SelectMapImage` in `XComMapManager` to fetch a map image path for the briefing screen.
+/// This hook runs after the image is picked, and if `OverrideMapImagePath` was modified to not be an empty string, it will be used as the map imagepath instead.
+/// ###Parameters
+/// * `OverrideMapImagePath`: An empty string used to override the map image
+/// * `ObjectiveMapName`: String which was used as a parameter for `SelectMapImage`
+/// * `ChosenMapImagePath`: String which was the result of the function call to `SelectMapImage`
+///
+/// You can use `'MAPS.SelectMapImage("MyMapName", "OptionalBiome")` to find an existing image definition or arbitrarily assign any string to `OverrideMapImagePath`
+static function OverrideDropshipMapImage(out string OverrideMapImagePath, const string ObjectiveMapName, const string ChosenMapImagePath)
+{
+}
+// End Issue #1524
+
+// Start Issue #1535
+/// HL-Docs: feature:OverrideLightingMap; issue:1535; tags:tactical
+/// Called from XComEnvLightingManager:Init
+///
+/// Allows for overriding the tactical mission lighting map after initial search for matching lighting definitions has been done
+/// If length of `OverrideEnvLightingDefs` array is non-zero, then `MatchingEnvLightingDefs` will be overwritten by `OverrideEnvLightingDefs`
+/// You can add one or more lighting definitions to `OverrideEnvLightingDefs` array, and one of them will be randomly selected
+///
+/// Usage example:
+/// ```unrealscript
+/// static function OverrideLightingMap(out array<EnvironmentLightingDefinition> OverrideEnvLightingDefs, const XComGameState_BattleData BattleData, const array<EnvironmentLightingDefinition> MatchingEnvLightingDefs)
+/// {
+///		local XComEnvLightingManager EnvMan;
+///		local EnvironmentLightingDefinition LightDef;
+///		local string MapName;
+///		local ETimeOfDay TimeOfDay;
+///
+///		EnvMan = `ENVLIGHTINGMGR;
+///
+///		MapName = BattleData.MapData.PlotMapName;
+///		TimeOfDay = class'X2StrategyGameRulesetDataStructures'.static.GetTimeOfDay(BattleData.LocalTime);
+///
+///		if(MapName == "MyExamplePlotMapName") // only continue if it's a map we want
+///		{
+///			foreach EnvMan.arrEnvironmentLightingDefs(LightDef)
+///			{
+///				if(TimeOfDay == eTimeOfDay_Night)	// if it's night then find night lighting map
+///				{
+///					if(LightDef.MapName == "XP_LE_AbandonedCity_Night")
+///					{
+///						OverrideEnvLightingDefs.AddItem(LightDef);
+///						break;
+///					}
+///				}
+///				else	// otherwise use the day map
+///				{
+///					if(LightDef.MapName == "XP_LE_AbandonedCity_Day")
+///					{
+///						OverrideEnvLightingDefs.AddItem(LightDef);
+///						break;
+///					}
+///				}
+///			}
+///		}
+/// }
+/// ```
+static function OverrideLightingMap(out array<EnvironmentLightingDefinition> OverrideEnvLightingDefs, const XComGameState_BattleData BattleData, const array<EnvironmentLightingDefinition> MatchingEnvLightingDefs)
+{
+}
+// End Issue #1535
+
+// Start Issue #1605
+/// HL Docs: feature:AddArmoryUIStatMarkups; issue:1605; tags:strategy,ui
+/// Called from `XComGameState_Unit::GetUIStatFromAbilities`
+/// Allows for mods to add conditional UIStatMarkups to be displayed in the Armory screen. 
+/// It should return `true` when a UIStatMarkup should be displayed; where the displayed value will be modified by the amount passed along in the `Result` parameter
+/// Usage example:
+/// ```unrealscript
+/// static function bool AddArmoryUIStatMarkups(const ECharStatType Stat, out int Result, const array<SoldierClassAbilityType> SoldierAbilities, const XComGameState_Unit UnitState)
+/// {
+///		local XComGameState_Item ArmorItem;
+///		
+///		if (Stat == eStat_Mobility
+///			&& SoldierAbilities.Find('AbilityName', 'AbilityWithMobBoostWhenUsingLightArmor') != INDEX_NONE)
+///		{
+///			ArmorItem = GetItemInSlot(eInvSlot_Armor, CheckGameState);
+///			if (ArmorItem != none
+///				&& X2ArmorTemplate(ArmorItem.GetMyTemplate()) != none
+///				&& X2ArmorTemplate(ArmorItem.GetMyTemplate()).ArmorClass == 'light')
+///			{
+///				Result = 2;
+///				return true;
+///			}
+///		}
+///		
+///		return false;
+/// }
+static function bool AddArmoryUIStatMarkups(const ECharStatType Stat, out int Result, const array<SoldierClassAbilityType> SoldierAbilities, const XComGameState_Unit UnitState)
+{
+}
+// End Issue #1605

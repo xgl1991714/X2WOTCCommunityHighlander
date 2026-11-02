@@ -1557,6 +1557,21 @@ simulated function BT_StartGetDestinations(bool bFiltered=false, bool bSkipBuild
 			AddTileToProcess(kTileScore);
 		}
 	}
+	/// HL-Docs: ref:AIHazardEscape
+	/// placed before CoverDestinations check because m_kReachableTilesCache will be empty
+	else if (NeedsHazardEscape())
+	{
+		AllTiles = GatherHazardEscapeTiles();
+		foreach AllTiles(kTile)
+		{
+			Position = WorldData.GetPositionFromTileCoordinates(kTile);
+			CoverPoint = EmptyCover;
+			WorldData.GetCoverPointAtFloor(Position, CoverPoint);
+			kTileScore = InitMoveTileData(kTile, CoverPoint);
+			AddTileToProcess(kTileScore);
+		}
+		`Log("Unit at ("$UnitState.TileLocation.X@UnitState.TileLocation.Y@UnitState.TileLocation.Z$") - found "$m_arrTilesToProcess.Length$" tiles",,'BT_StartGetDestinations');
+	}
 	else if( !ShouldAvoidTilesWithCover() && !UnitState.IsCivilian() && !IsMeleeMove() && m_arrMoveWeightProfile[CurrMoveType].fCoverWeight > 0.0f)
 	{
 		foreach m_kUnit.m_kReachableTilesCache.CoverDestinations(Position)
@@ -1792,6 +1807,50 @@ function BT_IgnoreHazards( bool bIgnore=true )
 	bIgnoreHazards = bIgnore;
 }
 
+/// HL-Docs: feature:AIHazardEscape; issue:1559; tags:tactical
+/// Lets AI units path out of hazards (poison, fire, acid) that leave them with no reachable tiles.
+/// Gathers non-hazardous tiles 3-5 away, scores them normally, then paths through the hazard via BuildNonUnitPath.
+/// Off by default, enabled with `CHHelpers.bEnableAIHazardEscape`.
+function bool NeedsHazardEscape()
+{
+	return (class'CHHelpers'.default.bEnableAIHazardEscape && m_kUnit.m_kReachableTilesCache.CoverDestinations.Length == 0 && class'XComPath'.static.TileContainsHazard(UnitState, UnitState.TileLocation));
+}
+
+/// HL-Docs: ref:AIHazardEscape
+/// Escape tiles are scored by BT_StepProcessDestinations like any other destination
+function array<TTile> GatherHazardEscapeTiles()
+{
+	local TTile TestTile;
+	local array<TTile> EscapeTiles;
+	local int dx, dy;
+	local int MinRadius, MaxRadius;
+
+	MinRadius = 3;
+	MaxRadius = 5;
+
+	// Check all tiles within radius range and return non-hazardous ones
+	for (dx = -MaxRadius; dx <= MaxRadius; ++dx)
+	{
+		for (dy = -MaxRadius; dy <= MaxRadius; ++dy)
+		{
+			TestTile = UnitState.TileLocation;
+			TestTile.X += dx;
+			TestTile.Y += dy;
+
+			// Skip tiles too close (within MinRadius)
+			if (abs(dx) < MinRadius && abs(dy) < MinRadius)
+				continue;
+
+			if (!class'XComPath'.static.TileContainsHazard(UnitState, TestTile))
+			{
+				EscapeTiles.AddItem(TestTile);
+			}
+		}
+	}
+
+	return EscapeTiles;
+}
+
 function BT_IncludeAlliesAsMeleeTargets()
 {
 	bIncludeAlliesAsMeleeTargets = true;
@@ -1928,8 +1987,10 @@ simulated function BT_StepProcessDestinations()
 				DebugTileScores[DebugIndex].Location = vLoc;
 			}
 
+			/// HL-Docs: ref:AIHazardEscape
+			// m_kReachableTilesCache will be empty if we are surrounded by a hazard
 			//See if this tile is reachable
-			if ( bValid && !m_kCurrMoveRestriction.bIsGrappleMove && !m_kUnit.m_kReachableTilesCache.IsTileReachable(kTileData.kTile) )
+			if ( bValid && !NeedsHazardEscape() && !m_kCurrMoveRestriction.bIsGrappleMove && !m_kUnit.m_kReachableTilesCache.IsTileReachable(kTileData.kTile) )
 			{
 				if (bLogTacticalDestinationIteration)
 				{
@@ -4729,6 +4790,9 @@ function BT_DisableGroupMove()
 function bt_status BT_FindDestination(int MoveTypeIndex, bool bRestricted=false)
 {
 	local TTile Tile;
+
+	MaybeUnblockPatrolMemberTiles(); // Issue #1550
+
 	// Check if we need to reset our 
 	if (bRestricted != m_bUseMoveRestriction)
 	{
@@ -6751,7 +6815,12 @@ function bool GetAllAoETargets(out array<TTile> TargetList, AoETargetingInfo Pro
 	local bool bValid;
 	local X2Effect MultiTargetEffect;
 	local X2AbilityTemplate AbilityTemplate;
-
+	// Start Issue #1369 - Variables to assist valid target filtering in bTestTargetEffectsApply
+	local array<X2Effect> TargetEffects;
+	local X2Effect TestEffect;
+	local X2GrenadeTemplate TestGrenadeTemplate;
+	local XComGameState_Item TestSourceWeapon;
+	// End Issue #1369
 	if (!GetUnfilteredAoETargetList(UnitList, Profile, RequiredTarget, DeprioritizedEffects))
 	{
 		return false;
@@ -6774,13 +6843,75 @@ function bool GetAllAoETargets(out array<TTile> TargetList, AoETargetingInfo Pro
 		if ( Profile.bTestTargetEffectsApply )
 		{
 			AbilityTemplate = AbilityState.GetMyTemplate();
-			// Ignore units that are immune to this ability. (passes as long as any effect applies to this unit)
-			foreach AbilityTemplate.AbilityMultiTargetEffects(MultiTargetEffect)
+			// Start Issue #1369
+			/// HL-Docs: feature:ImproveAIAreaOfEffectProfiles; issue:1369; tags:tactical
+			/// Setting bTestTargetEffectsApply on AOE Profiles in XComAI is supposed to filter the list of acceptable targets 
+			/// for a given Area of Effect ability by looking through the targeting conditions on each effect and checking whether 
+			/// or not the prospective targets are immune to the damage (this is done in X2Effect::TargetIsValidForAbility). However, 
+			/// this feature was not built to handle grenade templates and the logic for multitargeteffects was also being short-circuited
+			/// due to bValid not being reset between each unit (i.e. so if a single unit passed the check, all subsequent units in the 
+			/// AOE were being added to the supposedly-filtered target list).
+			If (AbilityTemplate.bUseLaunchedGrenadeEffects)
 			{
-				if (MultiTargetEffect.TargetIsValidForAbility(TargetState, UnitState, AbilityState))
+				TestSourceWeapon = AbilityState.GetSourceWeapon();
+				bValid = false;
+				If (TestSourceWeapon != none)
 				{
-					bValid = true;
-					break;
+					TestGrenadeTemplate = X2GrenadeTemplate(TestSourceWeapon.GetLoadedAmmoTemplate(AbilityState));
+					If (TestGrenadeTemplate != none)
+					{
+						TargetEffects = TestGrenadeTemplate.LaunchedGrenadeEffects;
+						If (TargetEffects.Length > 0)
+						{					
+							foreach TargetEffects(TestEffect)
+							{
+								if(TestEffect.DamageTypes.Length > 0 && TestEffect.TargetIsValidForAbility(TargetState, UnitState, AbilityState))
+								{
+									bValid = true;
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+			else if (AbilityTemplate.bUseThrownGrenadeEffects)
+			{
+				TestSourceWeapon = AbilityState.GetSourceWeapon();
+				bValid = false;
+				If (TestSourceWeapon != none)
+				{
+					TestGrenadeTemplate = X2GrenadeTemplate(TestSourceWeapon.GetMyTemplate());
+					If (TestGrenadeTemplate != none)
+					{
+						TargetEffects = TestGrenadeTemplate.ThrownGrenadeEffects;
+						If (TargetEffects.Length > 0)
+						{
+							foreach TargetEffects(TestEffect)
+							{
+								if(TestEffect.DamageTypes.Length > 0 && TestEffect.TargetIsValidForAbility(TargetState, UnitState, AbilityState))
+								{
+									bValid = true;
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+			else
+			{
+				// Ignore units that are immune to this ability. (passes as long as any effect applies to this unit)
+				foreach AbilityTemplate.AbilityMultiTargetEffects(MultiTargetEffect)
+				{
+					// Issue #1369 - Reset bValid for Each Unit and check the DamageTypes Array on the MultiTargetEffects to
+					// exclude dummy abilities with no damage type from passing the validity check 
+					bValid = false;	
+					if (MultiTargetEffect.DamageTypes.Length > 0 && MultiTargetEffect.TargetIsValidForAbility(TargetState, UnitState, AbilityState))
+					{
+						bValid = true;
+						break;
+					}
 				}
 			}
 			if (!bValid)
@@ -6788,6 +6919,7 @@ function bool GetAllAoETargets(out array<TTile> TargetList, AoETargetingInfo Pro
 				continue;
 			}
 		}
+		// End Issue #1369
 
 		// Ignore inactive AI units that are not visible.
 		if (TargetState.ControllingPlayerIsAI() && TargetState.IsUnrevealedAI()
@@ -8495,6 +8627,8 @@ simulated function bool MoveToPoint(vector vDestination, optional out string Fai
 	local bool bPathFailed;
 	local TTile kTileDest;
 	local array<PathPoint> PathPoints;
+	local array<ETraversalType> AllowedTraversals;
+	local bool bNeedsHazardEscape;
 
 	bPathFailed=false;
 
@@ -8514,7 +8648,10 @@ simulated function bool MoveToPoint(vector vDestination, optional out string Fai
 		bPathFailed = true;
 	}
 
-	if (!bPathFailed)
+	/// HL-Docs: ref:AIHazardEscape
+	/// IsTileReachable will always return false if surrounded by hazards, so skip this check
+	bNeedsHazardEscape = NeedsHazardEscape();
+	if (!bPathFailed && !bNeedsHazardEscape)
 	{
 		bPathFailed = !m_kUnit.m_kReachableTilesCache.IsTileReachable(kTileDest);
 		if (bPathFailed)
@@ -8523,24 +8660,50 @@ simulated function bool MoveToPoint(vector vDestination, optional out string Fai
 		}
 	}
 
-	if( !bPathFailed || bForcePathIfUnreachable )
-	{	
+	if( !bPathFailed || bForcePathIfUnreachable || bNeedsHazardEscape )
+	{
 		if (XGAIBehavior_Civilian(self) != none)
 		{
 			XGAIBehavior_Civilian(self).m_iMoveTimeStart = WorldInfo.TimeSeconds;
 		}
 
-		m_kUnit.m_kReachableTilesCache.BuildPathToTile(kTileDest, Path);
-		if( bForcePathIfUnreachable && Path.Length < 2 )
+		/// HL-Docs: ref:AIHazardEscape
+		/// Use BuildNonUnitPath to path through hazards with runtime traversal capabilities
+		if (bNeedsHazardEscape)
 		{
-			bPathFailed = false;
-			class'X2PathSolver'.static.BuildPath(UnitState, UnitState.TileLocation, kTileDest, Path);
-			// get the path points
-			class'X2PathSolver'.static.GetPathPointsFromPath(UnitState, Path, PathPoints);
-			// make the flight path nice and smooth
-			class'XComPath'.static.PerformStringPulling(m_kUnit, PathPoints);
-			// Reinsert into our array.
-			class'XComPath'.static.GetPathTileArray(PathPoints, Path);
+			// Build allowed traversals from unit's runtime traversal capabilities
+			if (UnitState.aTraversals[eTraversal_Normal] > 0) AllowedTraversals.AddItem(eTraversal_Normal);
+			if (UnitState.aTraversals[eTraversal_ClimbOver] > 0) AllowedTraversals.AddItem(eTraversal_ClimbOver);
+			if (UnitState.aTraversals[eTraversal_ClimbOnto] > 0) AllowedTraversals.AddItem(eTraversal_ClimbOnto);
+			if (UnitState.aTraversals[eTraversal_ClimbLadder] > 0) AllowedTraversals.AddItem(eTraversal_ClimbLadder);
+			if (UnitState.aTraversals[eTraversal_DropDown] > 0) AllowedTraversals.AddItem(eTraversal_DropDown);
+			if (UnitState.aTraversals[eTraversal_Grapple] > 0) AllowedTraversals.AddItem(eTraversal_Grapple);
+			if (UnitState.aTraversals[eTraversal_Landing] > 0) AllowedTraversals.AddItem(eTraversal_Landing);
+			if (UnitState.aTraversals[eTraversal_BreakWindow] > 0) AllowedTraversals.AddItem(eTraversal_BreakWindow);
+			if (UnitState.aTraversals[eTraversal_KickDoor] > 0) AllowedTraversals.AddItem(eTraversal_KickDoor);
+			if (UnitState.aTraversals[eTraversal_JumpUp] > 0) AllowedTraversals.AddItem(eTraversal_JumpUp);
+			if (UnitState.aTraversals[eTraversal_WallClimb] > 0) AllowedTraversals.AddItem(eTraversal_WallClimb);
+			if (UnitState.aTraversals[eTraversal_Phasing] > 0) AllowedTraversals.AddItem(eTraversal_Phasing);
+			if (UnitState.aTraversals[eTraversal_BreakWall] > 0) AllowedTraversals.AddItem(eTraversal_BreakWall);
+			if (UnitState.aTraversals[eTraversal_Launch] > 0) AllowedTraversals.AddItem(eTraversal_Launch);
+			if (UnitState.aTraversals[eTraversal_Flying] > 0) AllowedTraversals.AddItem(eTraversal_Flying);
+			if (UnitState.aTraversals[eTraversal_Land] > 0) AllowedTraversals.AddItem(eTraversal_Land);
+			class'X2PathSolver'.static.BuildNonUnitPath(UnitState.TileLocation, kTileDest, AllowedTraversals, Path);
+		}
+		else
+		{
+			m_kUnit.m_kReachableTilesCache.BuildPathToTile(kTileDest, Path);
+			if( bForcePathIfUnreachable && Path.Length < 2 )
+			{
+				bPathFailed = false;
+				class'X2PathSolver'.static.BuildPath(UnitState, UnitState.TileLocation, kTileDest, Path);
+				// get the path points
+				class'X2PathSolver'.static.GetPathPointsFromPath(UnitState, Path, PathPoints);
+				// make the flight path nice and smooth
+				class'XComPath'.static.PerformStringPulling(m_kUnit, PathPoints);
+				// Reinsert into our array.
+				class'XComPath'.static.GetPathTileArray(PathPoints, Path);
+			}
 		}
 
 		if (Path.Length < 2)
@@ -9490,6 +9653,8 @@ state RedAlertMovement extends MoveState
 		local int nEnemiesVisible;
 		local XComGameState_Unit NearestEnemy;
 
+		MaybeUnblockPatrolMemberTiles(); // Issue #1550
+
 		CheckForCheatManagerMoveDestination();
 
 		if (m_bBTDestinationSet)
@@ -9600,6 +9765,33 @@ state XComMovement extends MoveState // Only accessed via specialized behavior t
 		return m_vBTDestination;
 	}
 }
+
+/// HL-Docs: ref:Bugfixes; issue:1550
+/// Patrolling or scampering units should be able to path through other members of their group now
+// Start Issue #1550
+simulated function MaybeUnblockPatrolMemberTiles()
+{
+	local array<TTile> Tiles;
+	local int UnitMobility;
+
+	if(	m_kPlayer != None &&
+		m_kPlayer.m_kNav.IsPatrol(m_kUnit.ObjectID, m_kPatrolGroup) &&
+		!m_kPatrolGroup.bDisableGroupMove &&
+		(m_kPlayer.m_ePhase == eAAP_GreenPatrolMovement || m_kPlayer.IsScampering(UnitState.ObjectID)) )
+	{
+		UnitMobility = m_kUnit.GetMobility();
+		m_kUnit.m_kReachableTilesCache.GetAllPathableTiles(Tiles);
+
+		// consider an unit that can't move at least its one action of movement "stuck" and unblock their patrol member tiles
+		if(Tiles.Length <= `METERSTOTILES(UnitMobility))
+		{
+			m_kPatrolGroup.UnblockMemberTiles();
+			m_kUnit.m_kReachableTilesCache.ForceCacheUpdate();
+		}
+	}
+}
+// End Issue #1550
+
 //------------------------------------------------------------------------------------------------
 simulated function bool IsValidPathDestination( vector vLoc, optional out string strFail )
 {
@@ -9673,6 +9865,8 @@ function bool GetTileWithinOneActionPointMove( TTile kTileIn, out TTile kTileOut
 simulated function bool HasValidDestinationToward( vector vTarget, out vector vDestination, bool bAllowDash=false )
 {
 	local TTile kTile, kClosestTile;
+
+	MaybeUnblockPatrolMemberTiles(); // Issue #1550
 
 	// First.  Get nearest valid dest.  Test for valid path.
 	vDestination = XComTacticalGRI(WorldInfo.GRI).GetClosestValidLocation(vTarget, m_kUnit,,false);

@@ -263,6 +263,11 @@ static function XComGameState CreateStrategyGameStartFromTactical()
 	local XComGameState_ObjectivesList ObjectivesList;
 	local XComGameState_WorldNarrativeTracker NarrativeTracker;
 
+	// Start Issue #1425
+	local array<X2DownloadableContentInfo> DLCInfos;
+	local int i;
+	// End Issue #1425
+
 	History = `XCOMHISTORY;
 	BattleData = XComGameState_BattleData(History.GetSingleGameStateObjectForClass(class'XComGameState_BattleData'));
 
@@ -324,6 +329,14 @@ static function XComGameState CreateStrategyGameStartFromTactical()
 	{
 		StartState.ModifyStateObject(class'XComGameState_WorldNarrativeTracker', NarrativeTracker.ObjectID);
 	}
+
+	// Start Issue #1425
+	DLCInfos = `DLCHOOKMGR.GetDLCInfos('ModifyStrategyStartState');
+	for (i = 0; i < DLCInfos.Length; ++i)
+	{
+		DLCInfos[i].ModifyStrategyStartState(StartState);
+	}
+	// End Issue #1425
 
 	History.AddGameStateToHistory(StartState);
 
@@ -470,6 +483,12 @@ static function ProcessMissionResults()
 	bMissionSuccess = BattleData.bLocalPlayerWon;
 
 	class'X2StrategyElement_DefaultMissionSources'.static.IncreaseForceLevel(NewGameState, MissionState);
+
+	// Start Issue #1466
+	// temporarily add the mission data into the cache
+	// the XCGS_MissionSite will be deleted right after this by the OnSuccessFn or OnFailureFn
+	XComHQ.arrGeneratedMissionData.AddItem(MissionState.GeneratedMission);
+	// End Issue #1466
 
 	if( bMissionSuccess )
 	{

@@ -1206,6 +1206,9 @@ function OnMakePosterSelected(UIButton ButtonControl)
 		`PHOTOBOOTH.CreatePoster(4, CreatePosterCallback);
 		`PHOTOBOOTH.m_kAutoGenCaptureState = eAGCS_Capturing;
 		bHasTakenPicture = true; //bgs-hlee (05.15.17): Picture taken at this point.
+		// Single line for Issue #1453 - Set a variable to let us know the user took a manual mission photo on the last
+		// mission - used to determine whether to generate a poster on the dropship when automatic posters are disabled
+		class'CHHelpers'.default.bManualPhotoTakenOnLastMission = true;
 	}
 }
 
@@ -2795,9 +2798,10 @@ defaultproperties
 	m_iGameIndex = -1;
 
 	//If you change these numbers mirror the change in XComPresentationLayerBase
-	m_iPosterSizeX = 800;
-	m_iPosterSizeY = 1200;
-
+	// Start Issue #1584 - Inherit from X2Photobooth instead, commented out seperate definition
+	//m_iPosterSizeX = 800;
+	//m_iPosterSizeY = 1200;
+	// End Issue #1584
 	m_fCameraFOV = 90
 
 	bUpdateCameraWithFormation = true;

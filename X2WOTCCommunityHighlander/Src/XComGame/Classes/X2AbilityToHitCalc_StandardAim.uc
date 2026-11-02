@@ -406,6 +406,12 @@ protected function int GetHitChance(XComGameState_Ability kAbility, AvailableTar
 			// StandardAim (with direct fire) will require visibility info between source and target (to check cover). 
 			if (`TACTICALRULES.VisibilityMgr.GetVisibilityInfo(UnitState.ObjectID, TargetState.ObjectID, VisInfo))
 			{	
+				// Issue #1565 - check if we're really considered "in cover"
+				if(!bMeleeAttack)
+				{
+					class'CHHelpers'.static.GetCDO().TriggerOverrideCoverLevel(UnitState, TargetState, VisInfo, self);
+				}
+
 				if (UnitState.CanFlank() && TargetState.GetMyTemplate().bCanTakeCover && VisInfo.TargetCover == CT_None)
 					bFlanking = true;
 				if (VisInfo.bClearLOS && !VisInfo.bVisibleGameplay)
@@ -725,7 +731,8 @@ protected function int GetHitChance(XComGameState_Ability kAbility, AvailableTar
 	{
 		FinalAdjust = m_ShotBreakdown.ResultTable[eHit_Success] * GetReactionAdjust(UnitState, TargetState);
 		AddModifier(-int(FinalAdjust), AbilityTemplate.LocFriendlyName, m_ShotBreakdown, eHit_Success, bDebugLog);
-		AddReactionFlatModifier(UnitState, TargetState, m_ShotBreakdown, bDebugLog);
+		// Single line for Issue #1622
+		AddReactionFlatModifier_CH(kAbility, UnitState, TargetState, m_ShotBreakdown, bDebugLog);
 	}
 	else if (FinalMultiplier != 1.0f)
 	{
@@ -780,6 +787,30 @@ function float GetReactionAdjust(XComGameState_Unit Shooter, XComGameState_Unit 
 	}
 	return default.REACTION_FINALMOD;
 }
+
+// Start Issue #1622
+function AddReactionFlatModifier_CH(XComGameState_Ability kAbility, XComGameState_Unit Shooter, XComGameState_Unit Target, out ShotBreakdown m_ShotBreakdown, bool bDebugLog)
+{
+	local XComGameState_Effect EffectState;
+	local StateObjectReference EffectRef;
+	local XComGameStateHistory History;
+	local X2Effect_Persistent  EffectTemplate;
+	local int Modifier;
+
+	History = `XCOMHISTORY;
+	foreach Shooter.AffectedByEffects(EffectRef)
+	{
+		EffectState = XComGameState_Effect(History.GetGameStateForObjectID(EffectRef.ObjectID));
+		EffectTemplate = EffectState.GetX2Effect();
+		if (EffectTemplate != none)
+		{
+			Modifier = 0;
+			EffectTemplate.ModifyReactionFireSuccess_CH(EffectState, kAbility, Shooter, Target, Modifier);
+			AddModifier(Modifier, EffectTemplate.FriendlyName, m_ShotBreakdown, eHit_Success, bDebugLog);
+		}
+	}
+}
+// End Issue #1622
 
 function AddReactionFlatModifier(XComGameState_Unit Shooter, XComGameState_Unit Target, out ShotBreakdown m_ShotBreakdown, bool bDebugLog)
 {

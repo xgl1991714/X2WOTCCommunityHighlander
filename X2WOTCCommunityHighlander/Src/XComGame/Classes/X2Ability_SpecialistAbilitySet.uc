@@ -718,13 +718,21 @@ static function X2AbilityTemplate RevivalProtocol()
 	local X2AbilityCost_Charges             ChargeCost;
 	local X2AbilityCharges                  Charges;
 
+	// Variable for Issue #1414
+	local X2Effect_RestoreActionPoints      RestoreActionPoints;
+
 	`CREATE_X2ABILITY_TEMPLATE(Template, 'RevivalProtocol');
 
 	ActionPointCost = new class'X2AbilityCost_ActionPoints';
 	ActionPointCost.iNumPoints = 1;
 	Template.AbilityCosts.AddItem(ActionPointCost);
 
-	Charges = new class'X2AbilityCharges';
+	// Start Issue #1414
+	// Use the correct class for Charges to make the number of charges scale with GREMLIN tier.
+	//Charges = new class'X2AbilityCharges';
+	Charges = new class'X2AbilityCharges_RevivalProtocol';
+	// End Issue #1414
+
 	Charges.InitialCharges = default.REVIVAL_PROTOCOL_CHARGES;
 	Template.AbilityCharges = Charges;
 
@@ -740,8 +748,32 @@ static function X2AbilityTemplate RevivalProtocol()
 
 	Template.AbilityTargetConditions.AddItem(new class'X2Condition_RevivalProtocol');
 
-	Template.AddTargetEffect(RemoveAdditionalEffectsForRevivalProtocolAndRestorativeMist());
-	Template.AddTargetEffect(new class'X2Effect_RestoreActionPoints');      //  put the unit back to full actions
+	// Start Issue #1435
+	/// HL-Docs: ref:Bugfixes; issue:1435
+	/// Fix bug that allows Revival Protocol to remove effects that are normally removed by a Medikit heal,
+	/// despite this functionality not being mentioned in the in-game localization, 
+	/// and units with these effects not being valid targets for this ability, unless they are also mentally impaired.
+	/// The bug was caused by Firaxis reusing the `RemoveAdditionalEffectsForRevivalProtocolAndRestorativeMist()` function, 
+	/// which makes sense for Restoration, as that ability also applies Medikit heal, 
+	/// but not for Revival Protocol, which is only supposed to remove mental impairments.
+	Template.AddTargetEffect(RemoveImpairingEffectsByDamageTypeForRevivalProtocol_CH());
+	// End Issue #1435
+
+	// Start Issue #1414
+	/// HL-Docs: ref:Bugfixes; issue:1414
+	/// Fixes the specialist's Revival Protocol and Restoration abilities to make them function as intended.
+	/// 1. Revival Protocol now can target any allied unit, not just units under player's control.
+	/// 2. Revival Protocol and Restoration now properly remove Stun, and no longer recover action points for Disoriented units.
+	/// 3. Revival Protocol now properly gets more Charges with higher GREMLIN tiers.
+	
+	// Add a new condition to this effect, so it does not restore action points if the unit is only stunned or disoriented.
+	RestoreActionPoints = new class'X2Effect_RestoreActionPoints';
+	RestoreActionPoints.TargetConditions.AddItem(new class'X2Condition_RevivalProtocolRestoreAP');
+	Template.AddTargetEffect(RestoreActionPoints);      //  put the unit back to full actions
+
+	// Use a separate effect to restore action points for a stunned unit.
+	Template.AddTargetEffect(class'X2StatusEffects'.static.CreateStunRecoverEffect());
+	// End Issue #1414
 
 	Template.AbilityTriggers.AddItem(default.PlayerInputTrigger);
 
@@ -1156,8 +1188,10 @@ static function X2AbilityTemplate RestorativeMist()
 	local X2AbilityTemplate                 Template;
 	local X2AbilityCost_ActionPoints        ActionPointCost;
 	local X2Condition_UnitProperty          HealTargetCondition;
-	local X2Condition_UnitStatCheck         UnitStatCheckCondition;
-	local X2Condition_UnitEffects           UnitEffectsCondition;
+	// Start Issue #1436 - Variables no longer needed - now handled by X2Condition_Restoration
+	//local X2Condition_UnitStatCheck         UnitStatCheckCondition;
+	//local X2Condition_UnitEffects           UnitEffectsCondition;
+	// End Issue #1436
 	local X2Effect_ApplyMedikitHeal         MedikitHeal;
 	local X2AbilityCharges                  Charges;
 	local X2AbilityCost_Charges             ChargeCost;
@@ -1197,31 +1231,51 @@ static function X2AbilityTemplate RestorativeMist()
 	HealTargetCondition = new class'X2Condition_UnitProperty';
 	HealTargetCondition.ExcludeHostileToSource = true;
 	HealTargetCondition.ExcludeFriendlyToSource = false;
-	HealTargetCondition.ExcludeFullHealth = true;
+	// Single line for Issue #1436 - Remove ExcludeFullHealth from Targeting conditions - Now handled by X2Condition_Restoration
+	//HealTargetCondition.ExcludeFullHealth = true;
 	HealTargetCondition.RequireSquadmates = true;
 	HealTargetCondition.ExcludeDead = false; //See comment below...
 	HealTargetCondition.ExcludeRobotic = true;      //  restorative mist can't affect robots
 	Template.AbilityMultiTargetConditions.AddItem(HealTargetCondition);
-
+		
+	// Start Issue #1436
+	/// HL-Docs: ref:Bugfixes; issue:1436
+	/// Targeting conditions for the Restoration ability do not allow the ability to target units 
+	/// which have mental status effects but are not otherwise injured (or affected by an effect which can be
+	/// removed by a medikit). This fix re-works the targeting conditions so that such units can be properly 
+	/// targeted.	
+	
 	//Hack: Do this instead of ExcludeDead, to only exclude properly-dead or bleeding-out units.
-	UnitStatCheckCondition = new class'X2Condition_UnitStatCheck';
+	/*UnitStatCheckCondition = new class'X2Condition_UnitStatCheck';
 	UnitStatCheckCondition.AddCheckStat(eStat_HP, 0, eCheck_GreaterThan);
 	Template.AbilityMultiTargetConditions.AddItem(UnitStatCheckCondition);
 
 	UnitEffectsCondition = new class'X2Condition_UnitEffects';
 	UnitEffectsCondition.AddExcludeEffect(class'X2StatusEffects'.default.BleedingOutName, 'AA_UnitIsImpaired');
-	Template.AbilityMultiTargetConditions.AddItem(UnitEffectsCondition);
+	Template.AbilityMultiTargetConditions.AddItem(UnitEffectsCondition);*/
+
+	Template.AbilityMultiTargetConditions.AddItem(new class'X2Condition_Restoration');
+	// End Issue #1436
 
 	//Healing effects follow...
 	MedikitHeal = new class'X2Effect_ApplyMedikitHeal';
 	MedikitHeal.PerUseHP = class'X2Ability_DefaultAbilitySet'.default.MEDIKIT_PERUSEHP;
 	Template.AddMultiTargetEffect(MedikitHeal);	
 
+	// Start Issue #1414
+	// Move this effect to apply before the effects that restore action points 
+	// to ensure the ability's behavior is consistent with Revival Protocol.
+	Template.AddMultiTargetEffect(RemoveAdditionalEffectsForRevivalProtocolAndRestorativeMist());
+
+	// Use a different condition on this effect so it does not grant action points if the unit is only stunned or disoriented.
 	RestoreEffect = new class'X2Effect_RestoreActionPoints';
-	RestoreEffect.TargetConditions.AddItem(new class'X2Condition_RevivalProtocol');
+	//RestoreEffect.TargetConditions.AddItem(new class'X2Condition_RevivalProtocol');
+	RestoreEffect.TargetConditions.AddItem(new class'X2Condition_RevivalProtocolRestoreAP');
 	Template.AddMultiTargetEffect(RestoreEffect);
 
-	Template.AddMultiTargetEffect(RemoveAdditionalEffectsForRevivalProtocolAndRestorativeMist());
+	// Add stun recover effect to restore action points for stunned units.
+	Template.AddMultiTargetEffect(class'X2StatusEffects'.static.CreateStunRecoverEffect());
+	// End Issue #1414
 	
 	//Typical path to build gamestate, but a (very crazy) special-case visualization
 	Template.BuildNewGameStateFn = SendGremlinToOwnerLocation_BuildGameState;
@@ -2112,6 +2166,9 @@ static function X2Effect_RemoveEffects RemoveAdditionalEffectsForRevivalProtocol
 	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.BerserkName);
 	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.ShatteredName);
 
+	// Single Line for Issue #1414 - make Revival Protocol and Restoration remove Stun.
+	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.StunnedName);	
+
 	foreach class'X2Ability_DefaultAbilitySet'.default.MedikitHealEffectTypes(HealType)
 	{
 		RemoveEffects.DamageTypesToRemove.AddItem(HealType);
@@ -2119,7 +2176,24 @@ static function X2Effect_RemoveEffects RemoveAdditionalEffectsForRevivalProtocol
 
 	return RemoveEffects;
 }
+// Start Issue #1435 - New function for Revival Protocol which no longer removes medikit-healable status effects.
+static function X2Effect_RemoveEffects RemoveImpairingEffectsByDamageTypeForRevivalProtocol_CH()
+{	
+	local X2Effect_RemoveEffectsByDamageType RemoveEffects;
 
+	RemoveEffects = new class'X2Effect_RemoveEffectsByDamageType';
+	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.DisorientedName);
+	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.PanickedName);
+	RemoveEffects.EffectNamesToRemove.AddItem(class'X2StatusEffects'.default.UnconsciousName);
+	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.DazedName);
+	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.ObsessedName);
+	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.BerserkName);
+	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.ShatteredName);
+	RemoveEffects.EffectNamesToRemove.AddItem(class'X2AbilityTemplateManager'.default.StunnedName);	
+
+	return RemoveEffects;
+}
+// End Issue #1435
 DefaultProperties
 {
 	EverVigilantEffectName = "EverVigilantTriggered";

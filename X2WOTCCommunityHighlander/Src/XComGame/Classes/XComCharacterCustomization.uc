@@ -542,8 +542,10 @@ function bool ValidatePartSelection(string PartType, name PartSelection)
 	return false;
 }
 
-// Start Issue #350, Enhanced version of above which also makes valid if possible. Less CopyPasta code then!
-// Return indicates if it managed to make the part valid.
+	// Start Issue #350
+	/// HL-Docs: ref:Bugfixes; issue:350
+	/// Updates various classes (XComCharacterCustomization, XCGS_Unit, XComHumanPawn and XGCharacterGenerator)
+	/// to carry out proper validation and selection of valid body parts on soldiers when other parts are changed in the armory.
 function bool MakePartValid(string PartType, out name PartSelection, optional bool BlankValid=true)
 {
 	local X2BodyPartTemplate BodyPart;
@@ -820,6 +822,8 @@ simulated function OnCategoryValueChange(int categoryIndex, int direction, optio
 		UpdatedUnitState.kAppearance.iArmorTintSecondary = WrapIndex(specificIndex, 0, XComHumanPawn(ActorPawn).NumPossibleArmorTints);
 		XComHumanPawn(ActorPawn).SetAppearance(UpdatedUnitState.kAppearance);
 		// Start Issue #380
+		/// HL-Docs: ref:Bugfixes; issue:380
+		/// Update cosmetic pawns when secondary armor color is changed as well as primary
 		CosmeticUnitPawn = XComPresentationLayerBase(Outer).GetUIPawnMgr().GetCosmeticPawn(eInvSlot_SecondaryWeapon, UpdatedUnitState.ObjectID);
 		if (CosmeticUnitPawn != none)
 		{

@@ -713,6 +713,9 @@ event bool SetTargetUnit()
 	local vector AimAtLocation;
 	local array<vector> TargetLocations;
 
+	// Variable for Issue #1301
+	local XComGameState_Unit FacingUnitState;
+
 	History = `XCOMHISTORY;
 	UnitState = UnitNative.GetVisualizedGameState(UseHistoryIndex);
 
@@ -927,8 +930,16 @@ event bool SetTargetUnit()
 		TempUnit = XGUnit(TargetActor);
 		if(TempUnit != none && bActorFromTargetingMethod && TempUnit.IdleStateMachine.LastAttacker != Unit)
 		{   
-			TempUnit.IdleStateMachine.LastAttacker = Unit;
-			TempUnit.IdleStateMachine.CheckForStanceUpdate(); //Tell the target that we are targeting them now
+			// Start Issue #1301
+			/// HL-Docs: ref:Bugfixes; issue:1301
+			/// Targeting enemies from concealment will no longer make them face the unit doing the targeting.
+			FacingUnitState = Unit.GetVisualizedGameState();
+			if (FacingUnitState == none || !FacingUnitState.IsConcealed())
+			{
+				TempUnit.IdleStateMachine.LastAttacker = Unit;
+				TempUnit.IdleStateMachine.CheckForStanceUpdate(); //Tell the target that we are targeting them now
+			}
+			// End Issue #1301
 		}
 	}
 //**********************************************************************************************
@@ -1986,11 +1997,15 @@ state EvaluateStance
 			// There may actually be no peekaround in the requested cover direction/peekside combination
 			if( DesiredPeekSide == ePeekLeft && Unit.GetCoverType(DesiredCoverIndex)!=CT_None)
 			{
-				DesiredFaceLocation = Unit.Location + `XWORLD.GetPeekLeftDirection(`IDX_TO_DIR(DesiredCoverIndex) , false) * 1000.0f;
+				/// HL-Docs: ref:Bugfixes; issue:1579
+				/// Units orient themselves on diagonal cover properly
+				// Issue #1579 - replace second parameter with `IS_DIAGONAL_COVER(Unit.GetCoverPoint())
+				DesiredFaceLocation = Unit.Location + `XWORLD.GetPeekLeftDirection(`IDX_TO_DIR(DesiredCoverIndex) , `IS_DIAGONAL_COVER(Unit.GetCoverPoint())) * 1000.0f;
 			}
 			else if( DesiredPeekSide == ePeekRight && Unit.GetCoverType(DesiredCoverIndex)!=CT_None)
 			{
-				DesiredFaceLocation = Unit.Location + `XWORLD.GetPeekRightDirection(`IDX_TO_DIR(DesiredCoverIndex) , false) * 1000.0f;
+				// Issue #1579 - replace second parameter with `IS_DIAGONAL_COVER(Unit.GetCoverPoint())
+				DesiredFaceLocation = Unit.Location + `XWORLD.GetPeekRightDirection(`IDX_TO_DIR(DesiredCoverIndex) , `IS_DIAGONAL_COVER(Unit.GetCoverPoint())) * 1000.0f;
 			}
 			// End Issue #269
 			else

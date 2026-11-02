@@ -1202,6 +1202,10 @@ function NormalDamagePreview(StateObjectReference TargetRef, out WeaponDamageVal
 			MaxDamagePreview.Damage += TempMaxDamage.Damage;
 			MaxDamagePreview.Pierce += TempMaxDamage.Pierce;
 			MaxDamagePreview.Shred  += TempMaxDamage.Shred;
+			// Begin Issue #1540 - serialize extra preview data!
+			MaxDamagePreview.Spread += TempMaxDamage.Spread;
+			MaxDamagePreview.PlusOne += TempMaxDamage.PlusOne;
+			// End Issue #1540
 			for( DamageModIndex = 0; DamageModIndex < TempMaxDamage.BonusDamageInfo.Length; ++DamageModIndex )
 			{
 				MaxDamagePreview.BonusDamageInfo.AddItem(TempMaxDamage.BonusDamageInfo[DamageModIndex]);
@@ -1210,6 +1214,10 @@ function NormalDamagePreview(StateObjectReference TargetRef, out WeaponDamageVal
 			MinDamagePreview.Damage += TempMinDamage.Damage;
 			MinDamagePreview.Pierce += TempMinDamage.Pierce;
 			MinDamagePreview.Shred  += TempMinDamage.Shred;
+			// Begin Issue #1540 - serialize extra preview data!
+			MinDamagePreview.Spread += TempMinDamage.Spread;
+			MinDamagePreview.PlusOne += TempMinDamage.PlusOne;
+			// End Issue #1540
 			for( DamageModIndex = 0; DamageModIndex < TempMinDamage.BonusDamageInfo.Length; ++DamageModIndex )
 			{
 				MinDamagePreview.BonusDamageInfo.AddItem(TempMinDamage.BonusDamageInfo[DamageModIndex]);
@@ -1224,21 +1232,46 @@ function NormalDamagePreview(StateObjectReference TargetRef, out WeaponDamageVal
 			MinDamagePreview.Damage += MinDamagePreview.Damage * BurstFire.NumExtraShots;
 			MinDamagePreview.Pierce += MinDamagePreview.Pierce * BurstFire.NumExtraShots;
 			MinDamagePreview.Shred  += MinDamagePreview.Shred * BurstFire.NumExtraShots;
+			// Begin Issue #1540 - serialize extra preview data!
+			MinDamagePreview.Spread *= BurstFire.NumExtraShots;
+			MinDamagePreview.PlusOne *= BurstFire.NumExtraShots;
+			// End Issue #1540
 
 			MaxDamagePreview.Damage += MaxDamagePreview.Damage * BurstFire.NumExtraShots;
 			MaxDamagePreview.Pierce += MaxDamagePreview.Pierce * BurstFire.NumExtraShots;
 			MaxDamagePreview.Shred  += MaxDamagePreview.Shred * BurstFire.NumExtraShots;
+			// Begin Issue #1540 - serialize extra preview data!
+			MaxDamagePreview.Spread *= BurstFire.NumExtraShots;
+			MaxDamagePreview.PlusOne *= BurstFire.NumExtraShots;
+			// End Issue #1540
 		}
 	}
+
+	// Begin Issue #1394
+	/// HL-Docs: ref:Bugfixes; issue:1394
+	/// Abilities which do not specify a custom damage preview function will show rupture damage on the damage
+	/// preview, even if the ability is not capable of doing any damage (e.g. self target abilities like reload). 
+	/// Checking that the previewed damage is non-zero before adding rupture damage to it mitigates this and improves
+	/// the display (mainly for modded gameplay, but it also occurs in niche base game circumstances e.g. if a ruptured 
+	/// unit becomes mind controlled).
 	if (Rupture > 0)
 	{
-		MinDamagePreview.Damage += Rupture;
-		MaxDamagePreview.Damage += Rupture;
 		DamageModInfo.bIsRupture = true;
 		DamageModInfo.Value = Rupture;
-		MinDamagePreview.BonusDamageInfo.AddItem(DamageModInfo);
-		MaxDamagePreview.BonusDamageInfo.AddItem(DamageModInfo);
-	}	
+
+    if (MinDamagePreview.Damage > 0)
+    {
+        MinDamagePreview.Damage += Rupture;
+        MinDamagePreview.BonusDamageInfo.AddItem(DamageModInfo);
+    }
+
+    if (MaxDamagePreview.Damage > 0)
+    {
+        MaxDamagePreview.Damage += Rupture;
+        MaxDamagePreview.BonusDamageInfo.AddItem(DamageModInfo);
+    }
+	}
+	// End Issue #1394
 
 	if (DestructibleState != none)
 	{
@@ -1465,7 +1498,13 @@ function EventListenerReturn CarryUnitMoveFinished(Object EventData, Object Even
 	EffectState = UnitState.GetUnitAffectedByEffectState(class'X2Ability_CarryUnit'.default.CarryUnitEffectName);
 	if (EffectState != none)
 	{
-		TargetUnitState = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(EffectState.ApplyEffectParameters.TargetStateObjectRef.ObjectID));
+		/// HL-Docs: ref:Bugfixes; issue:1459
+		/// Unit carrying another unit now properly updates the location of the carried unit instead of reduntantly updating its own location again
+		// Start Issue #1459
+		// Replace "EffectState.ApplyEffectParameters.TargetStateObjectRef.ObjectID" with "EffectState.ApplyEffectParameters.AbilityInputContext.PrimaryTarget.ObjectID"
+		TargetUnitState = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(EffectState.ApplyEffectParameters.AbilityInputContext.PrimaryTarget.ObjectID));
+		// End Issue #1459
+
 		if (TargetUnitState != none)
 		{
 			NewGameState = class'XComGameStateContext_ChangeContainer'.static.CreateChangeState(string(GetFuncName()));

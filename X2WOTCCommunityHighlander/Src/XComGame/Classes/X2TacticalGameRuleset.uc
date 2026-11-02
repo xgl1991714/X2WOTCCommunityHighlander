@@ -1246,6 +1246,8 @@ function ApplyStartOfMatchConditions()
 	local X2HackRewardTemplate Template;
 	local XComGameState NewGameState;
 	local Name HackRewardName, ConcealmentName;
+	// Variable for Issue #1319
+	local XComGameState ConcealmentBrokenGameState;
 
 	History = `XCOMHISTORY;
 
@@ -1266,7 +1268,28 @@ function ApplyStartOfMatchConditions()
 		}
 	}
 	else
-	{
+	{		
+		// Start Issue #1319
+		/// HL-Docs: ref:Bugfixes; issue:1319
+		/// If mission start concealment is disabled by `bForceNoSquadConcealment` flag in BattleData, 
+		/// trigger the `SquadConcealmentBroken` event on mission start. 
+		/// In the base game, this flag is set only by the "High Alert" Dark Event.
+		/// Triggering the event fixes the bug on Supply Extraction missions,
+		/// where ADVENT never starts collecting supply crates if XCOM starts unconcealed,
+		/// because the mission kismet starts the crate collection when the `SquadConcealmentBroken` event is triggered.
+		if (BattleDataState.bForceNoSquadConcealment)
+		{
+			foreach History.IterateByClassType(class'XComGameState_Player', PlayerState)
+			{
+				if (PlayerState.GetTeam() == eTeam_XCom)
+				{
+					ConcealmentBrokenGameState = class'XComGameStateContext_ChangeContainer'.static.CreateChangeState("Break Mission Start Concealment");
+					`XEVENTMGR.TriggerEvent('SquadConcealmentBroken', PlayerState, PlayerState, ConcealmentBrokenGameState);
+					`TACTICALRULES.SubmitGameState(ConcealmentBrokenGameState);				
+				}
+			}
+		}
+		// End Issue #1319
 		if(!BattleDataState.DirectTransferInfo.IsDirectMissionTransfer) // only apply phantom at the start of the first leg of a multi-part mission
 		{
 			foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
@@ -3893,6 +3916,24 @@ Begin:
 		sleep(0.0);
 	}
 
+	// Start Issue #1406
+	/// HL-Docs: feature:PostMissionIntroKismet; issue:1406; tags:tactical
+	/// This event triggers after mission intro kismet has been completed.
+	/// For example, a mission such as Supply Extraction spawns their objective crates
+	/// when `'SeqEvent_OnTacticalMissionStartBlocking'` has been triggered,
+	/// which happens after `'OnBeginTacticalPlay'` event has already been triggered.
+	/// As such, you don't have a handle for anything the mission kismet causes before your first XCOM turn.
+	/// This event can be considered a later alternative to `'OnBeginTacticalPlay'` event.
+	///
+	/// ```event
+	/// EventID: PostMissionIntroKismet,
+	/// EventData: none,
+	/// EventSource: none,
+	/// NewGameState: none
+	/// ```
+	`XEVENTMGR.TriggerEvent('PostMissionIntroKismet',,,);
+	// End Issue #1406
+
 	// set up start of match special conditions, including squad concealment
 	ApplyStartOfMatchConditions();
 
@@ -4244,6 +4285,11 @@ Begin:
 	{
 		sleep(0.0);
 	}
+
+	// Start Issue #1406
+	/// HL-Docs: ref:PostMissionIntroKismet
+	`XEVENTMGR.TriggerEvent('PostMissionIntroKismet',,,);
+	// End Issue #1406
 
 	// kick off the gameplay start kismet, do not wait for it to complete latent actions
 	WorldInfo.TriggerGlobalEventClass(class'SeqEvent_OnTacticalMissionStartNonBlocking', WorldInfo);
@@ -4636,16 +4682,53 @@ simulated state TurnPhase_UnitActions
 
 		if( !bReturningFromInterruptedTurn )
 		{
-			foreach GroupState.m_arrMembers(UnitRef)
-			{
-				// Create a new state object on NewPhaseState for UnitState
-				NewUnitState = XComGameState_Unit(NewGameState.ModifyStateObject(class'XComGameState_Unit', UnitRef.ObjectID));
-				NewUnitState.SetupActionsForBeginTurn();
-			}
+			/*	
+				Start issue #1325:
+			 
+				Basic Description: New condition added for the opt in interruption fix. 
 
-			// Trigger the UnitGroupTurnBegun event
-			EventManager = `XEVENTMGR;
-			EventManager.TriggerEvent('UnitGroupTurnBegun', GroupState, GroupState, NewGameState);
+				Long Description: If the unit's group is involved in an initiative interruption (most commonly happens via skirmisher interrupt),
+				then we use the new CHL_SetupActionsForBeginTurn function that was also provided for issue 1325. With the new function, we can customize what exactly happens to a unit
+				on a turn interruption. This does require the user (or a mod) opts into the fix though. If not opted into, or this logic is approached without a turn interruption occuring, then
+				the "else" path is fired, which is exactly what happens normally prior to this CHL change. For more details on the individual options involved with CHL_SetupActionsForBeginTurn 
+				and why their starting values are the way they are, review the associated config options found in XComGameCore.ini.
+			 */
+			if(class'CHHelpers'.default.EnableImprovedInterruptionLogic && BattleData.InterruptingGroupRef.ObjectID == GroupState.ObjectID)
+			{
+				foreach GroupState.m_arrMembers(UnitRef)
+				{
+					// Create a new state object on NewPhaseState for UnitState
+					NewUnitState = XComGameState_Unit(NewGameState.ModifyStateObject(class'XComGameState_Unit', UnitRef.ObjectID));
+					NewUnitState.CHL_SetupActionsForBeginTurn(class'CHHelpers'.default.InterruptionsGiveActionPoints,
+															class'CHHelpers'.default.InterruptionsResetUntouchable,
+															class'CHHelpers'.default.InterruptionsResetGotFreeFireAction,
+															class'CHHelpers'.default.InterruptionsHandleMovementUnitValues,
+															class'CHHelpers'.default.InterruptionsCleanupBeginTurnUnitValues,
+															class'CHHelpers'.default.InterruptionsUpdateTurnStartLocation,
+															class'CHHelpers'.default.InterruptionsResetPanicTestsPerformedThisTurn);
+				}
+
+				if(class'CHHelpers'.default.InterruptionsTriggerGroupTurnBegunEvent)
+				{
+					// Trigger the UnitGroupTurnBegun event
+					EventManager = `XEVENTMGR;
+					EventManager.TriggerEvent('UnitGroupTurnBegun', GroupState, GroupState, NewGameState);
+				}
+			}
+			else
+			{
+				foreach GroupState.m_arrMembers(UnitRef)
+				{
+					// Create a new state object on NewPhaseState for UnitState
+					NewUnitState = XComGameState_Unit(NewGameState.ModifyStateObject(class'XComGameState_Unit', UnitRef.ObjectID));
+					NewUnitState.SetupActionsForBeginTurn();
+				}
+
+				// Trigger the UnitGroupTurnBegun event
+				EventManager = `XEVENTMGR;
+				EventManager.TriggerEvent('UnitGroupTurnBegun', GroupState, GroupState, NewGameState);
+			}
+			//End issue #1325
 		}
 
 		SubmitGameState(NewGameState);

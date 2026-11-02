@@ -670,6 +670,10 @@ function int GetAttackingDamageModifier_CH(XComGameState_Effect EffectState, XCo
 }
 // End Issue #1305
 
+// Start Issue #1603
+function bool ChangeModifyDamageValueForAttacker(XComGameState_Effect EffectState, out int bIsImmuneToDamage, X2Effect_ApplyWeaponDamage WeaponDamageEffect, out WeaponDamageValue DamageValue, Damageable Target, out array<name> AppliedDamageTypes, XComGameState_Item SourceWeapon, XComGameState_Unit SourceUnit, XComGameState_Ability AbilityState) { return false; }
+// End Issue #1603
+
 function int GetAttackingDamageModifier(XComGameState_Effect EffectState, XComGameState_Unit Attacker, Damageable TargetDamageable, XComGameState_Ability AbilityState, const out EffectAppliedData AppliedData, const int CurrentDamage, optional XComGameState NewGameState) { return 0; }
 function int GetDefendingDamageModifier(XComGameState_Effect EffectState, XComGameState_Unit Attacker, Damageable TargetDamageable, XComGameState_Ability AbilityState, const out EffectAppliedData AppliedData, const int CurrentDamage, X2Effect_ApplyWeaponDamage WeaponDamageEffect, optional XComGameState NewGameState) { return 0; }
 function int GetBaseDefendingDamageModifier(XComGameState_Effect EffectState, XComGameState_Unit Attacker, Damageable TargetDamageable, XComGameState_Ability AbilityState, const out EffectAppliedData AppliedData, const int BaseDamage, X2Effect_ApplyWeaponDamage WeaponDamageEffect, optional XComGameState NewGameState) { return 0; }
@@ -679,7 +683,22 @@ function int GetConditionalExtraShredValue(int UnconditionalShred, XComGameState
 function ModifyTurnStartActionPoints(XComGameState_Unit UnitState, out array<name> ActionPoints, XComGameState_Effect EffectState);
 function bool AllowReactionFireCrit(XComGameState_Unit UnitState, XComGameState_Unit TargetState) { return false; }
 function ModifyReactionFireSuccess(XComGameState_Unit UnitState, XComGameState_Unit TargetState, out int Modifier);
+// Start Issue #1622
+/// HL-Docs: feature:ImprovedModifyReactionFireSuccessHook; issue:1622; tags:tactical
+/// Adds `AddReactionFlatModifier_CH()` that passes the ability state from the hitcalc and
+/// `ModifyReactionFireSuccess_CH()` that provides the effect state and the passed ability state.
+function ModifyReactionFireSuccess_CH(XComGameState_Effect EffectState, XComGameState_Ability AbilityState, XComGameState_Unit UnitState, XComGameState_Unit TargetState, out int Modifier)
+{
+	ModifyReactionFireSuccess(UnitState, TargetState, Modifier);
+}
+// End Issue #1622
 function bool ProvidesDamageImmunity(XComGameState_Effect EffectState, name DamageType) { return false; }
+// Start Issue #1591 - New implementation allowing the Ability name to be passed in, to give greater control of immunities
+function bool ProvidesDamageImmunity_CH(XComGameState_Effect EffectState, name DamageType, optional name AbilityName)
+{
+	return ProvidesDamageImmunity(EffectState, DamageType);
+}
+// End Issue #1591
 function ModifyGameplayVisibilityForTarget(out GameRulesCache_VisibilityInfo InOutVisibilityInfo, XComGameState_Unit SourceUnit, XComGameState_Unit TargetUnit);
 function bool PostAbilityCostPaid(XComGameState_Effect EffectState, XComGameStateContext_Ability AbilityContext, XComGameState_Ability kAbility, XComGameState_Unit SourceUnit, XComGameState_Item AffectWeapon, XComGameState NewGameState, const array<name> PreCostActionPoints, const array<name> PreCostReservePoints) { return false; }
 function GetStatCheckModToSuccessCheck(XComGameState_Effect EffectState, XComGameState_Unit UnitState, XComGameState_Ability AbilityState, out int Successes);
@@ -687,6 +706,12 @@ function bool RetainIndividualConcealment(XComGameState_Effect EffectState, XCom
 function bool DoesEffectAllowUnitToBleedOut(XComGameState_Unit UnitState) { return true; }
 function bool DoesEffectAllowUnitToBeLooted(XComGameState NewGameState, XComGameState_Unit UnitState) { return true; }
 function bool CanAbilityHitUnit(name AbilityName) { return true; }
+// Start Issue #1591 - New implementation allowing the Ability Context & Effect state to be passed in, allowing mods greater control of hit logic
+function bool CanAbilityHitUnit_CH(name AbilityName, optional XComGameStateContext_Ability AbilityContext, optional XComGameState_Effect EffectState)
+{
+	return CanAbilityHitUnit(AbilityName);
+}
+// End Issue #1591
 function bool PreDeathCheck(XComGameState NewGameState, XComGameState_Unit UnitState, XComGameState_Effect EffectState) { return false; }
 function bool PreBleedoutCheck(XComGameState NewGameState, XComGameState_Unit UnitState, XComGameState_Effect EffectState) { return false; }
 function bool ForcesBleedout(XComGameState NewGameState, XComGameState_Unit UnitState, XComGameState_Effect EffectState) { return bEffectForcesBleedout; }
@@ -695,6 +720,15 @@ function      AdjustEffectDuration(const out EffectAppliedData ApplyEffectParame
 function Actor GetProjectileVolleyTemplate(XComGameState_Unit UnitState, XComGameState_Effect EffectState, XComGameStateContext_Ability AbilityContext) { return none; }
 function bool AdjustSuperConcealModifier(XComGameState_Unit UnitState, XComGameState_Effect EffectState, XComGameState_Ability AbilityState, XComGameState RespondToGameState, const int BaseModifier, out int CurrentModifier) { return false; }
 function bool FreeKillOnDamage(XComGameState_Unit Shooter, XComGameState_Unit Target, XComGameState GameState, const int ToKillTarget, const out EffectAppliedData ApplyEffectParameters) { return false; }
+// Start Issue #1615
+/// HL-Docs: feature:ImprovedFreeKillOnDamageHook; issue:1615; tags:tactical
+/// Adds an improved version of FreeKillOnDamage() that provides
+/// additional arguments related to the calculated damage value.
+function bool FreeKillOnDamage_CH(XComGameState_Unit Shooter, XComGameState_Unit Target, XComGameState NewGameState, const int ToKillTarget, const out EffectAppliedData ApplyEffectParameters, const out array<name> AppliedDamageTypes, const int iDamage, const int iMitigated, const int NewShred, const int NewRupture, bool bDoesDamageIgnoreShields)
+{
+	return FreeKillOnDamage(Shooter, Target, NewGameState, ToKillTarget, ApplyEffectParameters);
+}
+// End Issue #1615
 function bool GrantsFreeActionPointForApplyCost(XComGameStateContext_Ability AbilityContext, XComGameState_Unit Shooter, XComGameState_Unit Target, XComGameState GameState) { return false; }
 function bool GrantsFreeActionPoint_Target(XComGameStateContext_Ability AbilityContext, XComGameState_Unit Shooter, XComGameState_Unit Target, XComGameState GameState) { return false; }
 function bool ImmediateSelectNextTarget(XComGameStateContext_Ability AbilityContext, XComGameState_Unit Target) { return false; }
@@ -849,6 +883,10 @@ function EGameplayBlocking ModifyGameplayDestinationBlockingForTarget(const XCom
 
 //  Register an effect in the config array EffectUpdatesOnMove on AbilityTemplateManager in order to receive these callbacks
 function OnUnitChangedTile(const out TTile NewTileLocation, XComGameState_Effect EffectState, XComGameState_Unit TargetUnit);
+
+//Begin Issue #1575
+function bool ProvidesImmunityToEffect(X2Effect Effect, XComGameState_Effect EffectState, XComGameState_Unit SourceUnit, XComGameState_Unit TargetUnit, XComGameState_Ability AbilityState) { return false; }
+//End Issue #1575
 
 //  Add the name of the effect to X2AbilityTemplateManager AffectingEffectRedirectors and implement this function to handle potential redirects
 function bool EffectShouldRedirect(XComGameStateContext_Ability AbilityContext, XComGameState_Ability SourceAbility, XComGameState_Effect EffectState, const X2Effect PotentialRedirect, XComGameState_Unit SourceUnit, XComGameState_Unit TargetUnit, out StateObjectReference RedirectTarget, out name Reason, out name OverrideEffectResult) { return false; }

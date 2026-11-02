@@ -64,9 +64,15 @@ enum Photobooth_ParticleEffectType
 	ePPET_TemplarBladeLeft,
 	ePPET_TemplarShield,
 	// Start Issue #359
-	// Similar to above, but we don't need any sort of special marker
-	// enums here as these are never used in code (only config)
-	// Still going to use buffers though!
+	/// HL-Docs: feature:PhotoboothParticleEffectEnums; issue:359; tags:strategy
+	/// This feature provides additional enum values for Photobooth particle effects. To use it,
+	/// modmakers are required to submit a Pull Request where they will add new enum names, 
+	/// which can then be used when defining particle effects for the Photobooth in `XComContent.ini`
+	/// by specifying `ParticleEffectTypes = ePPET_NAME` within an `m_arrAnimationPoses` entry,
+	/// and `ParticleEffectType = ePPET_NAME` within a `ParticleEffects` entry.
+	/// The enum value will then be used by the game to connect the two entries.
+	/// Note that it's also possible to add particle effects to Photobooth poses by adding them
+	/// directly to AnimSequences via PlayParticleEffect AnimNotifies, like TLP poses do.
 	ePPET_Buffer04,
 	ePPET_Buffer05,
 	ePPET_Buffer06,
@@ -298,8 +304,9 @@ var int m_iOnScreenY;
 var int m_iOnScreenSizeX;
 var int m_iOnScreenSizeY;
 
-var int m_iPosterSizeX;
-var int m_iPosterSizeY;
+// Issue #1584 - Expose poster size variables to config
+var config int m_iPosterSizeX;
+var config int m_iPosterSizeY;
 
 var float m_fMaxXPercentage;
 var float m_fMaxYPercentage;
@@ -3497,9 +3504,10 @@ defaultproperties
 	m_kFinalPosterComponent=SceneCapture2DComponent1
 	Components.Add(SceneCapture2DComponent1)
 
-	//If you change these numbers mirror the change in XComPresentationLayerBase
-	m_iPosterSizeX = 800;
-	m_iPosterSizeY = 1200;
+	// Start Issue #1584 - Variables set by config, no need for them here
+	//m_iPosterSizeX = 800;
+	//m_iPosterSizeY = 1200;
+	// End Issue #1584
 
 	m_bFormationNeedsUpdate=false
 	m_bFormationLoading=false

@@ -119,6 +119,9 @@ var EIdleTurretState IdleTurretState;
 
 var transient Actor TempFOWViewer;
 
+// Issue #1290 - A variable for a dropped weapon when unit dies
+var transient XComWeapon DummyWeapon;
+
 
 replication
 {
@@ -1053,7 +1056,9 @@ simulated function bool IsAlien_CheckByCharType()
 	UnitState = XComGameState_Unit(History.GetGameStateForObjectID(ObjectID));
 	if (UnitState != none)
 	{
-		return UnitState.IsAlien();
+	/// HL-Docs: ref:Bugfixes; issue:1508
+	/// XGUnit.UnitSpeak can now allow alien pawns that are used for XCOM soldiers to use voicepacks and speak.
+		return UnitState.IsAlien() && !UnitState.IsSoldier();
 	}
 	
 	return false;
@@ -1380,7 +1385,6 @@ function UnitSpeak(Name nCharSpeech, bool bDeadUnitSound = false)
 	if ((!bDeadUnitSound && !IsAliveAndWell()) || m_kPawn == none)
 		return;
 
-
 	GameStateUnit = GetVisualizedGameState();
 	if (GameStateUnit.IsPanicked())
 	{
@@ -1442,7 +1446,6 @@ function UnitSpeak(Name nCharSpeech, bool bDeadUnitSound = false)
 			return;
 	}
 
-
 	// mark that we played this voice
 	if (nCharSpeech != 'TakingDamage' && nCharSpeech != 'TargetKilled' && nCharSpeech != 'TakingFire' && nCharSpeech != 'HiddenMovement' && nCharSpeech != 'HiddenMovementVox')
 	{
@@ -1452,15 +1455,53 @@ function UnitSpeak(Name nCharSpeech, bool bDeadUnitSound = false)
 	nHushedSpeech = MaybeUseHushedSpeechInstead(nCharSpeech);
 	nPersonalitySpeech = MaybeAddPersonalityToSpeech(nCharSpeech);
 
-	if (nHushedSpeech != '')
+	// Start Issue #1419 - Perform an AkSpeechExists() check before calling m_kPawn.UnitSpeak()
+	if (nHushedSpeech != '' && AkSpeechExists(nHushedSpeech))
+	{
 		m_kPawn.UnitSpeak(nHushedSpeech);
-	else if (nPersonalitySpeech != '')
+	}
+	else if (nPersonalitySpeech != '' && AkSpeechExists(nPersonalitySpeech))
+	{
 		m_kPawn.UnitSpeak(nPersonalitySpeech);
-	else
+	}
+	else if (AkSpeechExists(nCharSpeech))
+	{
 		m_kPawn.UnitSpeak(nCharSpeech);
+	}
+	// End Issue #1419
 
 	m_fTimeSinceLastUnitSpeak = 0.0f;
 }
+
+// Start Issue #1419
+/// HL-Docs: ref:Bugfixes; issue:1419
+/// Characters that use WWise to play voicelines no longer attempt to play missing voicelines
+private function bool AkSpeechExists(Name Speech)
+{
+	local string AkEvent;
+	local int SoundIndex;
+
+	// check if unit voice has a WWise SoundBank
+	if (XComHumanPawn(m_kPawn).Voice != None && XComHumanPawn(m_kPawn).Voice.AkBankName != "")
+	{
+		// construct an AkEvent name and attempt to play it
+		AkEvent = "Play_" $ XComHumanPawn(m_kPawn).Voice.AkBankName $ "_" $ string(Speech);
+		SoundIndex = m_kPawn.PlayAkSound(AkEvent);
+
+		// sound exists
+		if (SoundIndex != 0)
+		{
+			m_kPawn.StopAkSound(SoundIndex);
+			return true;
+		}
+
+		return false;
+	}
+
+	// it's a SoundCue-based speech
+	return true;
+}
+// End Issue #1419
 
 function name MaybeUseHushedSpeechInstead(Name nCharSpeech)
 {
@@ -1815,11 +1856,17 @@ simulated function XGInventory GetInventory()
 
 function OnDeath( class<DamageType> DamageType, XGUnit kDamageDealer )
 {
+	
 	local int i;
-	local XGUnit SurvivingUnit;
+//	Issue #1398 - Variable no longer required here - moved to DelaySpeechSquadMemberDead() function
+//	local XGUnit SurvivingUnit;
 	local XGPlayer PlayerToNotify;	
-	local bool kIsRobotic;
+//	Issue #1398 - Variable no longer required here - moved to DelaySpeechSquadMemberDead() function
+//	local bool kIsRobotic;
+//	Issue #1501 - Variable to check dead unit state for voiceline processing
+	local XComGameState_Unit	DeadUnit;
 
+	DeadUnit = GetVisualizedGameState();
 	UnitSpeak('DeathScream', true);
 
 	// Notify all players of the death
@@ -1854,15 +1901,50 @@ function OnDeath( class<DamageType> DamageType, XGUnit kDamageDealer )
 		m_kConstantCombatUnitTargetingMe.ConstantCombatSuppress(false,none);
 		m_kConstantCombatUnitTargetingMe = none;
 	}
+	// Start Issue #1398 - Code block below no longer needed - moved to DelaySpeechSquadMemberDead() function
+	// RAM - Constant Combat
 
-	//RAM - Constant Combat
+	// SurvivingUnit = GetSquad().GetNextGoodMember();
+	// kIsRobotic = IsRobotic();
 
-	SurvivingUnit = GetSquad().GetNextGoodMember();
-	kIsRobotic = IsRobotic();
+	// if (SurvivingUnit != none && !kIsRobotic && !IsAlien_CheckByCharType())
+	//		SurvivingUnit.UnitSpeak( 'SquadMemberDead' );	
 
-	if (SurvivingUnit != none && !kIsRobotic && !IsAlien_CheckByCharType())
-		SurvivingUnit.UnitSpeak( 'SquadMemberDead' );
+	/// HL-Docs: ref:Bugfixes; issue:1398
+	/// This fix adds additional checks to X2Action_ApplyWeaponDamageToUnit, to prevent 'Taking Damage' or 
+	/// 'Critically Wounded' voicelines from playing alongside the 'Death Scream' voiceline if a unit is killed. 
+	/// Additionally, it adds a delay to the 'Squad Member Dead' voicelines to reduce overlapy with deathscream 
+	/// voicelines that may already be playing.
+	// Start Issue #1501
+	/// HL-Docs: ref:Bugfixes; issue:1501
+	/// Check that the unit that died is a soldier and that if it is mind controlled, that it is not on our team
+	/// (i.e. we want to play squadmate dead lines for mind controlled XCom units that die while on the other team's side)
+	if(DeadUnit.IsSoldier())
+	{
+		if(!DeadUnit.IsMindControlled() || DeadUnit.IsMindControlled() && DeadUnit.GetTeam() != eTeam_XCom)
+		{
+			SetTimer(class'CHHelpers'.default.fSquadMemberDeadVoicelineDelay, false, 'DelaySpeechSquadMemberDead', self);
+		}
+	// End Issue #1501
+	}
+	// End Issue #1398
 }
+// Start Issue #1398
+private function DelaySpeechSquadMemberDead()
+{
+	local XGUnit	SurvivingUnit;	
+
+	/// HL-Docs: ref:Bugfixes; issue:1572
+	/// Incapacitated squadmembers no longer react to their own deaths or deaths of other squadmembers
+	// Issue #1572 - use GetNextGoodMember_CH()
+	SurvivingUnit = GetSquad().GetNextGoodMember_CH();
+	
+	if (SurvivingUnit != none && !IsRobotic() && !IsAlien_CheckByCharType())
+	{
+		SurvivingUnit.UnitSpeak( 'SquadMemberDead' );
+	}
+}
+// End Issue #1398
 
 //-------------------------------------------------------------------------------------
 //---------------------------------- DEBUGGING ----------------------------------------
@@ -3149,6 +3231,11 @@ simulated function DropWeapon()
 	local Rotator   rRot;
 	local XComWeapon kXComWeapon;
 
+	// Start Issue #1290
+	local SkeletalMeshComponent DroppedWeaponMesh;
+	local XComWeapon DroppedWeapon;
+	// End Issue #1290
+
 	// Lose the weapon we're holding here.  Drop it or launch it.
 	kWeapon = GetInventory().GetActiveWeapon();
 
@@ -3156,28 +3243,41 @@ simulated function DropWeapon()
 	{   	
 		kXComWeapon = XComWeapon(kWeapon.m_kEntity);
 		m_kPawn.Mesh.GetSocketWorldLocationAndRotation(kXComWeapon.DefaultSocket, vLoc, rRot);
+
+		// Start Issue #1290
+		/// HL-Docs: ref:Bugfixes; issue:1290
+		/// Update XGUnit::DropWeapon() function with code from Chimera Squad to prevent unit weapons from glitching when dropped on death.
+		// Detach the original weapon
 		m_kPawn.Mesh.DetachComponent(kXComWeapon.Mesh);
 		kXComWeapon.SetBase(None);
-		kWeapon.m_kEntity.AttachComponent(kXComWeapon.Mesh);
-		SkeletalMeshComponent(kXComWeapon.Mesh).SetPhysicsAsset(SkeletalMeshComponent(kXComWeapon.Mesh).PhysicsAsset, true);
-		//GetInventory().DropItem( kWeapon );
-		//GetInventory().UnequipItem();
-		kWeapon.m_kEntity.CollisionComponent = kXComWeapon.Mesh;
-		SkeletalMeshComponent(kXComWeapon.Mesh).PhysicsWeight=1.0f;
-		SkeletalMeshComponent(kXComWeapon.Mesh).ForceSkelUpdate();
-		SkeletalMeshComponent(kXComWeapon.Mesh).UpdateRBBonesFromSpaceBases(TRUE, TRUE);
-		SkeletalMeshComponent(kXComWeapon.Mesh).bSyncActorLocationToRootRigidBody=true;
 
-		kXComWeapon.Mesh.WakeRigidBody();
-		kWeapon.m_kEntity.SetPhysics(PHYS_RigidBody /*PHYS_None*/);
-		kWeapon.m_kEntity.SetHidden(false);
-		kWeapon.m_kEntity.SetLocation(vLoc);
-		kWeapon.m_kEntity.SetRotation(rRot);
+		// Then spawn a separate actor that will be the dropped weapon.
+		DroppedWeapon = Spawn(class'XComWeapon', , 'DroppedWeapon', vLoc, rRot, Actor(kXComWeapon.ObjectArchetype));
+		DroppedWeaponMesh = SkeletalMeshComponent(DroppedWeapon.Mesh);
 
-		SkeletalMeshComponent(kXComWeapon.Mesh).SetRBPosition(vLoc);
-		SkeletalMeshComponent(kXComWeapon.Mesh).SetRBRotation(rRot);
-		SkeletalMeshComponent(kXComWeapon.Mesh).SetRBLinearVelocity(vect(0,0,0), false);
-		SkeletalMeshComponent(kXComWeapon.Mesh).SetRBAngularVelocity(vect(0,0,0), false);
+		kWeapon.DecorateWeaponMesh(DroppedWeaponMesh);
+
+		DroppedWeapon.CollisionComponent = DroppedWeaponMesh;
+		DroppedWeapon.SetPhysics(PHYS_RigidBody);
+		DroppedWeapon.SetVisible(true);
+		DroppedWeaponMesh.PhysicsWeight = 1.0f;
+		DroppedWeaponMesh.ForceSkelUpdate();
+		DroppedWeaponMesh.UpdateRBBonesFromSpaceBases(TRUE, TRUE);
+		DroppedWeaponMesh.bSyncActorLocationToRootRigidBody = true;
+		DroppedWeaponMesh.WakeRigidBody();
+		DroppedWeapon.SetLocation(vLoc);
+		DroppedWeapon.SetRotation(rRot);
+		DroppedWeaponMesh.SetRBPosition(vLoc);
+		DroppedWeaponMesh.SetRBRotation(rRot);
+		DroppedWeaponMesh.SetRBLinearVelocity(vect(0, 0, 0), false);
+		DroppedWeaponMesh.SetRBAngularVelocity(vect(2, 0, 0), false);
+
+		// Assign the new weapon as a dummy which will be deleted if unit is revived
+		DummyWeapon = DroppedWeapon;
+		// Set mesh of weapon to none since it kept showing up despite hiding meshes
+		kXComWeapon.Mesh = None;
+
+		// End Issue #1290
 	}
 }
 
